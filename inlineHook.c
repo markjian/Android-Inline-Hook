@@ -58,7 +58,7 @@ struct inlineHookInfo {
 
 static struct inlineHookInfo info = {0};
 
-static int getAllTids(pid_t pid, pid_t *tids)
+static int getAllTids(pid_t exclude_tid, pid_t *tids)
 {
 	char dir_path[32];
 	DIR *dir;
@@ -66,11 +66,11 @@ static int getAllTids(pid_t pid, pid_t *tids)
 	struct dirent *entry;
 	pid_t tid;
 
-	if (pid < 0) {
+	if (exclude_tid < 0) {
 		snprintf(dir_path, sizeof(dir_path), "/proc/self/task");
 	}
 	else {
-		snprintf(dir_path, sizeof(dir_path), "/proc/%d/task", pid);
+		snprintf(dir_path, sizeof(dir_path), "/proc/%d/task", exclude_tid);
 	}
 
 	dir = opendir(dir_path);
@@ -81,7 +81,7 @@ static int getAllTids(pid_t pid, pid_t *tids)
     i = 0;
     while((entry = readdir(dir)) != NULL) {
     	tid = atoi(entry->d_name);
-    	if (tid != 0 && tid != getpid()) {
+    	if (tid != 0 && tid != exclude_tid) {
     		tids[i++] = tid;
     	}
     }
@@ -148,7 +148,7 @@ static pid_t freeze(struct inlineHookItem *item, int action)
 	pid_t pid;
 
 	pid = -1;
-	count = getAllTids(getpid(), tids);
+	count = getAllTids(gettid(), tids);
 	if (count > 0) {
 		pid = fork();
 
@@ -202,7 +202,7 @@ static bool isExecutableAddr(uint32_t addr)
 	}
 
 	while (fgets(line, sizeof(line), fp)) {
-		if (strstr(line, "r-xp")) {
+		if (strstr(line, "r-xp") || strstr(line, "rwxp")) {
 			start = strtoul(strtok(line, "-"), NULL, 16);
 			end = strtoul(strtok(NULL, " "), NULL, 16);
 			if (addr >= start && addr <= end) {
@@ -343,6 +343,10 @@ static void doInlineHook(struct inlineHookItem *item)
 {
 	mprotect((void *) PAGE_START(CLEAR_BIT0(item->target_addr)), PAGE_SIZE * 2, PROT_READ | PROT_WRITE | PROT_EXEC);
 
+	if (item->proto_addr != NULL) {
+		*(item->proto_addr) = TEST_BIT0(item->target_addr) ? (uint32_t *) SET_BIT0((uint32_t) item->trampoline_instructions) : item->trampoline_instructions;
+	}
+	
 	if (TEST_BIT0(item->target_addr)) {
 		int i;
 
@@ -361,10 +365,6 @@ static void doInlineHook(struct inlineHookItem *item)
 	}
 
 	mprotect((void *) PAGE_START(CLEAR_BIT0(item->target_addr)), PAGE_SIZE * 2, PROT_READ | PROT_EXEC);
-
-	if (item->proto_addr != NULL) {
-		*(item->proto_addr) = TEST_BIT0(item->target_addr) ? (uint32_t *) SET_BIT0((uint32_t) item->trampoline_instructions) : item->trampoline_instructions;
-	}
 
 	item->status = HOOKED;
 	
